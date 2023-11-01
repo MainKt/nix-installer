@@ -34,6 +34,8 @@ pub enum InitSystem {
     None,
     #[cfg(target_os = "linux")]
     Systemd,
+    #[cfg(target_os = "linux")]
+    Runit,
     #[cfg(target_os = "macos")]
     Launchd,
 }
@@ -45,6 +47,8 @@ impl std::fmt::Display for InitSystem {
             InitSystem::None => write!(f, "none"),
             #[cfg(target_os = "linux")]
             InitSystem::Systemd => write!(f, "systemd"),
+            #[cfg(target_os = "linux")]
+            InitSystem::Runit => write!(f, "runit"),
             #[cfg(target_os = "macos")]
             InitSystem::Launchd => write!(f, "launchd"),
         }
@@ -406,6 +410,17 @@ async fn linux_detect_systemd_started() -> bool {
     started
 }
 
+#[cfg(target_os = "linux")]
+async fn linux_detect_init_system() -> Result<InitSystem, InstallSettingsError> {
+    if std::path::Path::new("/run/systemd/system").exists() {
+        Ok(InitSystem::Systemd)
+    } else if std::path::Path::new("/run/runit").exists() {
+        Ok(InitSystem::Runit)
+    } else {
+        Err(InstallSettingsError::InitNotSupported)
+    }
+}
+
 #[serde_with::serde_as]
 #[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
 #[cfg_attr(feature = "cli", derive(clap::Parser))]
@@ -444,15 +459,15 @@ impl InitSettings {
         let (init, start_daemon) = match (Architecture::host(), OperatingSystem::host()) {
             #[cfg(target_os = "linux")]
             (Architecture::X86_64, OperatingSystem::Linux) => {
-                (InitSystem::Systemd, linux_detect_systemd_started().await)
+                (linux_detect_init_system().await?, linux_detect_systemd_started().await)
             },
             #[cfg(target_os = "linux")]
             (Architecture::X86_32(_), OperatingSystem::Linux) => {
-                (InitSystem::Systemd, linux_detect_systemd_started().await)
+                (linux_detect_init_system().await?, linux_detect_systemd_started().await)
             },
             #[cfg(target_os = "linux")]
             (Architecture::Aarch64(_), OperatingSystem::Linux) => {
-                (InitSystem::Systemd, linux_detect_systemd_started().await)
+                (linux_detect_init_system().await?, linux_detect_systemd_started().await)
             },
             #[cfg(target_os = "macos")]
             (Architecture::X86_64, OperatingSystem::MacOSX { .. })

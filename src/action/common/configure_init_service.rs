@@ -1,4 +1,6 @@
 #[cfg(target_os = "linux")]
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use tokio::process::Command;
@@ -22,6 +24,14 @@ const SOCKET_DEST: &str = "/etc/systemd/system/nix-daemon.socket";
 const TMPFILES_SRC: &str = "/nix/var/nix/profiles/default/lib/tmpfiles.d/nix-daemon.conf";
 #[cfg(target_os = "linux")]
 const TMPFILES_DEST: &str = "/etc/tmpfiles.d/nix-daemon.conf";
+#[cfg(target_os = "linux")]
+const DAEMON_SRC: &str = "/nix/var/nix/profiles/default/bin/nix-daemon";
+#[cfg(target_os = "linux")]
+const RUNIT_SERVICE: &str = "/etc/sv/nix-daemon";
+#[cfg(target_os = "linux")]
+const RUNIT_SYMLINK: &str = "/var/service/nix-daemon";
+#[cfg(target_os = "linux")]
+const RUNIT_RUN_PATH: &str = "/etc/sv/nix-daemon/run";
 #[cfg(target_os = "macos")]
 const DARWIN_NIX_DAEMON_DEST: &str = "/Library/LaunchDaemons/org.nixos.nix-daemon.plist";
 #[cfg(target_os = "macos")]
@@ -67,6 +77,15 @@ impl ConfigureInitService {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
+    async fn check_if_runit_unit_exists(dest: &str) -> Result<(), ActionErrorKind> {
+        let dest = PathBuf::from(dest);
+        if dest.exists()  {
+            return Err(ActionErrorKind::DirExists(dest));
+        }
+        Ok(())
+    }
+
     #[tracing::instrument(level = "debug", skip_all)]
     pub async fn plan(
         init: InitSystem,
@@ -97,6 +116,20 @@ impl ConfigureInitService {
                     .map_err(Self::error)?;
             },
             #[cfg(target_os = "linux")]
+            InitSystem::Runit => {
+                if !Path::new("/run/runit").exists() {
+                    return Err(Self::error(ActionErrorKind::RunitMissing));
+                }
+
+                if which::which("sv").is_err() {
+                    return Err(Self::error(ActionErrorKind::RunitMissing));
+                }
+
+                Self::check_if_runit_unit_exists(RUNIT_SERVICE)
+                    .await
+                    .map_err(Self::error)?;
+            },
+            #[cfg(target_os = "linux")]
             InitSystem::None => {
                 // Nothing here, no init system
             },
@@ -116,6 +149,8 @@ impl Action for ConfigureInitService {
         match self.init {
             #[cfg(target_os = "linux")]
             InitSystem::Systemd => "Configure Nix daemon related settings with systemd".to_string(),
+            #[cfg(target_os = "linux")]
+            InitSystem::Runit => "Configure Nix daemon related settings with runit".to_string(),
             #[cfg(target_os = "macos")]
             InitSystem::Launchd => {
                 "Configure Nix daemon related settings with launchctl".to_string()
@@ -143,6 +178,17 @@ impl Action for ConfigureInitService {
                 if self.start_daemon {
                     explanation.push(format!("Run `systemctl enable --now {SOCKET_SRC}`"));
                 }
+                vec.push(ActionDescription::new(self.tracing_synopsis(), explanation))
+            },
+            #[cfg(target_os = "linux")]
+            InitSystem::Runit => {
+                let mut explanation = vec![
+                    format!("Create {RUNIT_SERVICE}"),
+                ];
+                if !self.start_daemon {
+                    explanation.push(format!("Create {RUNIT_SERVICE}/down"));
+                }
+                explanation.push(format!("Symlink {RUNIT_SERVICE} to {RUNIT_SYMLINK}"));
                 vec.push(ActionDescription::new(self.tracing_synopsis(), explanation))
             },
             #[cfg(target_os = "macos")]
@@ -345,6 +391,58 @@ impl Action for ConfigureInitService {
                     enable(SOCKET_SRC, false).await.map_err(Self::error)?;
                 }
             },
+            #[cfg(target_os = "linux")]
+            InitSystem::Runit => {
+                tokio::fs::create_dir(RUNIT_SERVICE)
+                    .await
+                    .map_err(|e| {
+                        ActionErrorKind::CreateDirectory(
+                            PathBuf::from(RUNIT_SERVICE),
+                            e
+                        )
+                    })
+                    .map_err(Self::error)?;
+
+                if !self.start_daemon {
+                    let down = &format!("{RUNIT_SERVICE}/down");
+                    tokio::fs::File::create(down)
+                        .await
+                        .map_err(|e| {
+                            ActionErrorKind::Write(PathBuf::from(down), e)
+                        })
+                        .map_err(Self::error)?;
+                }
+
+                let run_script = format!("#!/bin/sh\nexec {DAEMON_SRC}");
+                tokio::fs::write(RUNIT_RUN_PATH, run_script)
+                    .await
+                    .map_err(|e| {
+                        ActionErrorKind::Write(PathBuf::from(RUNIT_RUN_PATH), e)
+                    })
+                    .map_err(Self::error)?;
+
+                tokio::fs::set_permissions(RUNIT_RUN_PATH, fs::Permissions::from_mode(0o755))
+                    .await
+                    .map_err(|e| {
+                        ActionErrorKind::SetPermissions(
+                            0o755,
+                            PathBuf::from(RUNIT_RUN_PATH),
+                            e,
+                        )
+                    })
+                    .map_err(Self::error)?;
+
+                tokio::fs::symlink(RUNIT_SERVICE, RUNIT_SYMLINK)
+                    .await
+                    .map_err(|e| {
+                        ActionErrorKind::Symlink(
+                            PathBuf::from(RUNIT_SERVICE),
+                            PathBuf::from(RUNIT_SYMLINK),
+                            e,
+                        )
+                    })
+                    .map_err(Self::error)?;
+            },
             #[cfg(not(target_os = "macos"))]
             InitSystem::None => {
                 // Nothing here, no init system
@@ -365,6 +463,17 @@ impl Action for ConfigureInitService {
                         format!("Run `systemctl disable {SERVICE_SRC}`"),
                         "Run `systemd-tempfiles --remove --prefix=/nix/var/nix`".to_string(),
                         "Run `systemctl daemon-reload`".to_string(),
+                    ],
+                )]
+            },
+            #[cfg(target_os = "linux")]
+            InitSystem::Runit => {
+                vec![ActionDescription::new(
+                    "Unconfigure Nix daemon related settings with runit".to_string(),
+                    vec![
+                        "Run `sv down nix-daemon`".to_string(),
+                        format!("Remove symlink {RUNIT_SYMLINK}"),
+                        format!("Remove {RUNIT_SERVICE}"),
                     ],
                 )]
             },
@@ -489,6 +598,33 @@ impl Action for ConfigureInitService {
                         .stdin(std::process::Stdio::null()),
                 )
                 .await
+                {
+                    errors.push(err);
+                }
+            },
+            #[cfg(target_os = "linux")]
+            InitSystem::Runit => {
+                if let Err(err) = execute_command(
+                    Command::new("sv")
+                        .process_group(0)
+                        .args(["down", "nix-daemon"])
+                        .stdin(std::process::Stdio::null()),
+                )
+                    .await
+                {
+                    errors.push(err)
+                }
+
+                if let Err(err) = tokio::fs::remove_dir_all(RUNIT_SYMLINK)
+                    .await
+                    .map_err(|e| ActionErrorKind::Remove(PathBuf::from(RUNIT_SYMLINK), e))
+                {
+                    errors.push(err);
+                }
+
+                if let Err(err) = tokio::fs::remove_dir_all(RUNIT_SERVICE)
+                    .await
+                    .map_err(|e| ActionErrorKind::Remove(PathBuf::from(RUNIT_SERVICE), e))
                 {
                     errors.push(err);
                 }
