@@ -80,7 +80,7 @@ impl ConfigureInitService {
     #[cfg(target_os = "linux")]
     async fn check_if_runit_unit_exists(dest: &str) -> Result<(), ActionErrorKind> {
         let dest = PathBuf::from(dest);
-        if dest.exists()  {
+        if dest.exists() {
             return Err(ActionErrorKind::DirExists(dest));
         }
         Ok(())
@@ -182,9 +182,7 @@ impl Action for ConfigureInitService {
             },
             #[cfg(target_os = "linux")]
             InitSystem::Runit => {
-                let mut explanation = vec![
-                    format!("Create {RUNIT_SERVICE}"),
-                ];
+                let mut explanation = vec![format!("Create {RUNIT_SERVICE}")];
                 if !self.start_daemon {
                     explanation.push(format!("Create {RUNIT_SERVICE}/down"));
                 }
@@ -395,40 +393,27 @@ impl Action for ConfigureInitService {
             InitSystem::Runit => {
                 tokio::fs::create_dir(RUNIT_SERVICE)
                     .await
-                    .map_err(|e| {
-                        ActionErrorKind::CreateDirectory(
-                            PathBuf::from(RUNIT_SERVICE),
-                            e
-                        )
-                    })
+                    .map_err(|e| ActionErrorKind::CreateDirectory(PathBuf::from(RUNIT_SERVICE), e))
                     .map_err(Self::error)?;
 
                 if !self.start_daemon {
                     let down = &format!("{RUNIT_SERVICE}/down");
                     tokio::fs::File::create(down)
                         .await
-                        .map_err(|e| {
-                            ActionErrorKind::Write(PathBuf::from(down), e)
-                        })
+                        .map_err(|e| ActionErrorKind::Write(PathBuf::from(down), e))
                         .map_err(Self::error)?;
                 }
 
                 let run_script = format!("#!/bin/sh\nexec {DAEMON_SRC}");
                 tokio::fs::write(RUNIT_RUN_PATH, run_script)
                     .await
-                    .map_err(|e| {
-                        ActionErrorKind::Write(PathBuf::from(RUNIT_RUN_PATH), e)
-                    })
+                    .map_err(|e| ActionErrorKind::Write(PathBuf::from(RUNIT_RUN_PATH), e))
                     .map_err(Self::error)?;
 
                 tokio::fs::set_permissions(RUNIT_RUN_PATH, fs::Permissions::from_mode(0o755))
                     .await
                     .map_err(|e| {
-                        ActionErrorKind::SetPermissions(
-                            0o755,
-                            PathBuf::from(RUNIT_RUN_PATH),
-                            e,
-                        )
+                        ActionErrorKind::SetPermissions(0o755, PathBuf::from(RUNIT_RUN_PATH), e)
                     })
                     .map_err(Self::error)?;
 
@@ -610,7 +595,7 @@ impl Action for ConfigureInitService {
                         .args(["down", "nix-daemon"])
                         .stdin(std::process::Stdio::null()),
                 )
-                    .await
+                .await
                 {
                     errors.push(err)
                 }

@@ -1,5 +1,5 @@
 /*! Configurable knobs and their related errors
-*/
+ */
 use std::{collections::HashMap, fmt::Display, path::PathBuf, str::FromStr};
 
 #[cfg(feature = "cli")]
@@ -59,7 +59,7 @@ impl std::fmt::Display for InitSystem {
 
 Settings which only apply to certain [`Planner`](crate::planner::Planner)s should be located in the planner.
 
-*/
+ */
 #[serde_with::serde_as]
 #[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
 #[cfg_attr(feature = "cli", derive(clap::Parser))]
@@ -148,38 +148,38 @@ pub struct CommonSettings {
 
     /// The Nix package URL
     #[cfg_attr(
-        feature = "cli",
-        clap(long, env = "NIX_INSTALLER_NIX_PACKAGE_URL", global = true, value_parser = clap::value_parser!(UrlOrPath))
+    feature = "cli",
+    clap(long, env = "NIX_INSTALLER_NIX_PACKAGE_URL", global = true, value_parser = clap::value_parser!(UrlOrPath))
     )]
     #[cfg_attr(
-        all(target_os = "macos", target_arch = "x86_64", feature = "cli"),
-        clap(
-            default_value = NIX_X64_64_DARWIN_URL,
-        )
+    all(target_os = "macos", target_arch = "x86_64", feature = "cli"),
+    clap(
+    default_value = NIX_X64_64_DARWIN_URL,
+    )
     )]
     #[cfg_attr(
-        all(target_os = "macos", target_arch = "aarch64", feature = "cli"),
-        clap(
-            default_value = NIX_AARCH64_DARWIN_URL,
-        )
+    all(target_os = "macos", target_arch = "aarch64", feature = "cli"),
+    clap(
+    default_value = NIX_AARCH64_DARWIN_URL,
+    )
     )]
     #[cfg_attr(
-        all(target_os = "linux", target_arch = "x86_64", feature = "cli"),
-        clap(
-            default_value = NIX_X64_64_LINUX_URL,
-        )
+    all(target_os = "linux", target_arch = "x86_64", feature = "cli"),
+    clap(
+    default_value = NIX_X64_64_LINUX_URL,
+    )
     )]
     #[cfg_attr(
-        all(target_os = "linux", target_arch = "x86", feature = "cli"),
-        clap(
-            default_value = NIX_I686_LINUX_URL,
-        )
+    all(target_os = "linux", target_arch = "x86", feature = "cli"),
+    clap(
+    default_value = NIX_I686_LINUX_URL,
+    )
     )]
     #[cfg_attr(
-        all(target_os = "linux", target_arch = "aarch64", feature = "cli"),
-        clap(
-            default_value = NIX_AARCH64_LINUX_URL,
-        )
+    all(target_os = "linux", target_arch = "aarch64", feature = "cli"),
+    clap(
+    default_value = NIX_AARCH64_LINUX_URL,
+    )
     )]
     pub nix_package_url: UrlOrPath,
 
@@ -211,13 +211,13 @@ pub struct CommonSettings {
     #[cfg(feature = "diagnostics")]
     /// Relate the install diagnostic to a specific value
     #[cfg_attr(
-        feature = "cli",
-        clap(
-            long,
-            default_value = None,
-            env = "NIX_INSTALLER_DIAGNOSTIC_ATTRIBUTION",
-            global = true
-        )
+    feature = "cli",
+    clap(
+    long,
+    default_value = None,
+    env = "NIX_INSTALLER_DIAGNOSTIC_ATTRIBUTION",
+    global = true
+    )
     )]
     pub diagnostic_attribution: Option<String>,
 
@@ -241,12 +241,12 @@ pub struct CommonSettings {
     ///
     /// To disable diagnostic reporting, unset the default with `--diagnostic-endpoint ""`, or `NIX_INSTALLER_DIAGNOSTIC_ENDPOINT=""`
     #[clap(
-        long,
-        env = "NIX_INSTALLER_DIAGNOSTIC_ENDPOINT",
-        global = true,
-        value_parser = crate::diagnostics::diagnostic_endpoint_validator,
-        num_args = 0..=1, // Required to allow `--diagnostic-endpoint` or `NIX_INSTALLER_DIAGNOSTIC_ENDPOINT=""`
-        default_value = "https://install.determinate.systems/nix/diagnostic"
+    long,
+    env = "NIX_INSTALLER_DIAGNOSTIC_ENDPOINT",
+    global = true,
+    value_parser = crate::diagnostics::diagnostic_endpoint_validator,
+    num_args = 0..=1, // Required to allow `--diagnostic-endpoint` or `NIX_INSTALLER_DIAGNOSTIC_ENDPOINT=""`
+    default_value = "https://install.determinate.systems/nix/diagnostic"
     )]
     pub diagnostic_endpoint: Option<String>,
 }
@@ -301,7 +301,7 @@ impl CommonSettings {
             _ => {
                 return Err(InstallSettingsError::UnsupportedArchitecture(
                     target_lexicon::HOST,
-                ))
+                ));
             },
         };
 
@@ -389,13 +389,12 @@ impl CommonSettings {
 }
 
 #[cfg(target_os = "linux")]
-async fn linux_detect_systemd_started() -> bool {
+async fn linux_detect_init_started(init: InitSystem) -> bool {
     use std::process::Stdio;
+    use tokio::process::Command;
 
-    let mut started = false;
-    if std::path::Path::new("/run/systemd/system").exists() {
-        started = tokio::process::Command::new("systemctl")
-            .arg("status")
+    async fn is_started(command: &mut Command) -> bool {
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -406,8 +405,13 @@ async fn linux_detect_systemd_started() -> bool {
             .unwrap_or(false)
     }
 
-    // TODO: Other inits
-    started
+    match init {
+        InitSystem::Systemd => is_started(Command::new("systemctl").arg("status")).await,
+        InitSystem::Runit => {
+            is_started(Command::new("sv").args(["status", "/var/service/sv"])).await
+        },
+        _ => false,
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -428,12 +432,12 @@ pub struct InitSettings {
     /// Which init system to configure (if `--init none` Nix will be root-only)
     #[cfg_attr(feature = "cli", clap(value_parser, long, env = "NIX_INSTALLER_INIT",))]
     #[cfg_attr(
-        all(target_os = "macos", feature = "cli"),
-        clap(default_value_t = InitSystem::Launchd)
+    all(target_os = "macos", feature = "cli"),
+    clap(default_value_t = InitSystem::Launchd)
     )]
     #[cfg_attr(
-        all(target_os = "linux", feature = "cli"),
-        clap(default_value_t = InitSystem::Systemd)
+    all(target_os = "linux", feature = "cli"),
+    clap(default_value_t = InitSystem::Systemd)
     )]
     pub init: InitSystem,
 
@@ -458,16 +462,12 @@ impl InitSettings {
         use target_lexicon::{Architecture, OperatingSystem};
         let (init, start_daemon) = match (Architecture::host(), OperatingSystem::host()) {
             #[cfg(target_os = "linux")]
-            (Architecture::X86_64, OperatingSystem::Linux) => {
-                (linux_detect_init_system().await?, linux_detect_systemd_started().await)
-            },
-            #[cfg(target_os = "linux")]
-            (Architecture::X86_32(_), OperatingSystem::Linux) => {
-                (linux_detect_init_system().await?, linux_detect_systemd_started().await)
-            },
-            #[cfg(target_os = "linux")]
-            (Architecture::Aarch64(_), OperatingSystem::Linux) => {
-                (linux_detect_init_system().await?, linux_detect_systemd_started().await)
+            (Architecture::X86_64, OperatingSystem::Linux)
+            | (Architecture::X86_32(_), OperatingSystem::Linux)
+            | (Architecture::Aarch64(_), OperatingSystem::Linux) => {
+                let init_system = linux_detect_init_system().await?;
+                let is_started = linux_detect_init_started(init_system).await;
+                (init_system, is_started)
             },
             #[cfg(target_os = "macos")]
             (Architecture::X86_64, OperatingSystem::MacOSX { .. })
@@ -478,7 +478,7 @@ impl InitSettings {
             _ => {
                 return Err(InstallSettingsError::UnsupportedArchitecture(
                     target_lexicon::HOST,
-                ))
+                ));
             },
         };
 
