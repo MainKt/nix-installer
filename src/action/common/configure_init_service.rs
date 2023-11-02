@@ -27,6 +27,8 @@ const TMPFILES_DEST: &str = "/etc/tmpfiles.d/nix-daemon.conf";
 #[cfg(target_os = "linux")]
 const DAEMON_SRC: &str = "/nix/var/nix/profiles/default/bin/nix-daemon";
 #[cfg(target_os = "linux")]
+const OPENRC_SERVICE: &str = "/etc/init.d/nix-daemon";
+#[cfg(target_os = "linux")]
 const RUNIT_SERVICE: &str = "/etc/sv/nix-daemon";
 #[cfg(target_os = "linux")]
 const RUNIT_SYMLINK: &str = "/var/service/nix-daemon";
@@ -37,9 +39,10 @@ const DARWIN_NIX_DAEMON_DEST: &str = "/Library/LaunchDaemons/org.nixos.nix-daemo
 #[cfg(target_os = "macos")]
 const DARWIN_NIX_DAEMON_SOURCE: &str =
     "/nix/var/nix/profiles/default/Library/LaunchDaemons/org.nixos.nix-daemon.plist";
+
 /**
 Configure the init to run the Nix daemon
-*/
+ */
 #[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
 pub struct ConfigureInitService {
     init: InitSystem,
@@ -86,6 +89,15 @@ impl ConfigureInitService {
         Ok(())
     }
 
+    #[cfg(target_os = "linux")]
+    async fn check_if_openrc_unit_exists(dest: &str) -> Result<(), ActionErrorKind> {
+        let dest = PathBuf::from(dest);
+        if dest.exists() {
+            return Err(ActionErrorKind::FileExists(dest));
+        }
+        Ok(())
+    }
+
     #[tracing::instrument(level = "debug", skip_all)]
     pub async fn plan(
         init: InitSystem,
@@ -112,6 +124,20 @@ impl ConfigureInitService {
                     .await
                     .map_err(Self::error)?;
                 Self::check_if_systemd_unit_exists(SOCKET_SRC, SOCKET_DEST)
+                    .await
+                    .map_err(Self::error)?;
+            },
+            #[cfg(target_os = "linux")]
+            InitSystem::OpenRC => {
+                if !Path::new("/run/openrc").exists() {
+                    return Err(Self::error(ActionErrorKind::OpenRCMissing));
+                }
+
+                if which::which("rc-update").is_err() {
+                    return Err(Self::error(ActionErrorKind::OpenRCMissing));
+                }
+
+                Self::check_if_openrc_unit_exists(OPENRC_SERVICE)
                     .await
                     .map_err(Self::error)?;
             },
@@ -151,6 +177,8 @@ impl Action for ConfigureInitService {
             InitSystem::Systemd => "Configure Nix daemon related settings with systemd".to_string(),
             #[cfg(target_os = "linux")]
             InitSystem::Runit => "Configure Nix daemon related settings with runit".to_string(),
+            #[cfg(target_os = "linux")]
+            InitSystem::OpenRC => "Configure Nix daemon related settings with openrc".to_string(),
             #[cfg(target_os = "macos")]
             InitSystem::Launchd => {
                 "Configure Nix daemon related settings with launchctl".to_string()
@@ -177,6 +205,16 @@ impl Action for ConfigureInitService {
                 ];
                 if self.start_daemon {
                     explanation.push(format!("Run `systemctl enable --now {SOCKET_SRC}`"));
+                }
+                vec.push(ActionDescription::new(self.tracing_synopsis(), explanation))
+            },
+            InitSystem::OpenRC => {
+                let mut explanation = vec![
+                    format!("Create `{OPENRC_SERVICE}`"),
+                    "Run `rc-update add nix-daemon`".to_string(),
+                ];
+                if self.start_daemon {
+                    explanation.push(format!("Run `rc-service nix-daemon start`"));
                 }
                 vec.push(ActionDescription::new(self.tracing_synopsis(), explanation))
             },
@@ -390,6 +428,49 @@ impl Action for ConfigureInitService {
                 }
             },
             #[cfg(target_os = "linux")]
+            InitSystem::OpenRC => {
+                let service_content = [
+                    "#!/sbin/openrc-run",
+                    r#"name=$RC_SVCNAME"#,
+                    r#"description="Nix Daemon""#,
+                    r#"supervisor="supervise-daemon""#,
+                    &format!(r#"command="{DAEMON_SRC}""#),
+                    r#"command_args="--daemon""#,
+                ]
+                .join("\n");
+                tokio::fs::write(OPENRC_SERVICE, service_content)
+                    .await
+                    .map_err(|e| ActionErrorKind::Write(PathBuf::from(OPENRC_SERVICE), e))
+                    .map_err(Self::error)?;
+
+                tokio::fs::set_permissions(OPENRC_SERVICE, fs::Permissions::from_mode(0o755))
+                    .await
+                    .map_err(|e| {
+                        ActionErrorKind::SetPermissions(0o755, PathBuf::from(OPENRC_SERVICE), e)
+                    })
+                    .map_err(Self::error)?;
+
+                execute_command(
+                    Command::new("rc-update")
+                        .process_group(0)
+                        .args(["add", "nix-daemon"])
+                        .stdin(std::process::Stdio::null()),
+                )
+                .await
+                .map_err(Self::error)?;
+
+                if self.start_daemon {
+                    execute_command(
+                        Command::new("rc-service")
+                            .process_group(0)
+                            .args(["nix-daemon", "start"])
+                            .stdin(std::process::Stdio::null()),
+                    )
+                    .await
+                    .map_err(Self::error)?;
+                }
+            },
+            #[cfg(target_os = "linux")]
             InitSystem::Runit => {
                 tokio::fs::create_dir(RUNIT_SERVICE)
                     .await
@@ -448,6 +529,16 @@ impl Action for ConfigureInitService {
                         format!("Run `systemctl disable {SERVICE_SRC}`"),
                         "Run `systemd-tempfiles --remove --prefix=/nix/var/nix`".to_string(),
                         "Run `systemctl daemon-reload`".to_string(),
+                    ],
+                )]
+            },
+            InitSystem::OpenRC => {
+                vec![ActionDescription::new(
+                    "Unconfigure Nix daemon related settings with openrc".to_string(),
+                    vec![
+                        "Run `rc-service nix-daemon stop`".to_string(),
+                        "Run `rc-update del nix-daemon`".to_string(),
+                        format!("Remove `{OPENRC_SERVICE}`").to_string(),
                     ],
                 )]
             },
@@ -583,6 +674,37 @@ impl Action for ConfigureInitService {
                         .stdin(std::process::Stdio::null()),
                 )
                 .await
+                {
+                    errors.push(err);
+                }
+            },
+            #[cfg(target_os = "linux")]
+            InitSystem::OpenRC => {
+                if let Err(err) = execute_command(
+                    Command::new("rc-service")
+                        .process_group(0)
+                        .args(["nix-daemon", "stop"])
+                        .stdin(std::process::Stdio::null()),
+                )
+                .await
+                {
+                    errors.push(err)
+                }
+
+                if let Err(err) = execute_command(
+                    Command::new("rc-update")
+                        .process_group(0)
+                        .args(["del", "nix-daemon"])
+                        .stdin(std::process::Stdio::null()),
+                )
+                .await
+                {
+                    errors.push(err)
+                }
+
+                if let Err(err) = tokio::fs::remove_file(OPENRC_SERVICE)
+                    .await
+                    .map_err(|e| ActionErrorKind::Remove(PathBuf::from(OPENRC_SERVICE), e))
                 {
                     errors.push(err);
                 }

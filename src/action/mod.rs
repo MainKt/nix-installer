@@ -561,6 +561,11 @@ pub enum ActionErrorKind {
         See https://github.com/DeterminateSystems/nix-installer#without-systemd-linux-only for documentation on usage and drawbacks.\
         ")]
     RunitMissing,
+    #[error("\
+        Could not detect OpenRC; you may be able to get up and running without OpenRC with `nix-installer install linux --init none`.\n\
+        See https://github.com/DeterminateSystems/nix-installer#without-systemd-linux-only for documentation on usage and drawbacks.\
+        ")]
+    OpenRCMissing,
     #[error("`{command}` failed, message: {message}")]
     DiskUtilInfoError { command: String, message: String },
     #[error(transparent)]

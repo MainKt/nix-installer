@@ -35,6 +35,8 @@ pub enum InitSystem {
     #[cfg(target_os = "linux")]
     Systemd,
     #[cfg(target_os = "linux")]
+    OpenRC,
+    #[cfg(target_os = "linux")]
     Runit,
     #[cfg(target_os = "macos")]
     Launchd,
@@ -47,6 +49,8 @@ impl std::fmt::Display for InitSystem {
             InitSystem::None => write!(f, "none"),
             #[cfg(target_os = "linux")]
             InitSystem::Systemd => write!(f, "systemd"),
+            #[cfg(target_os = "linux")]
+            InitSystem::OpenRC => write!(f, "openrc"),
             #[cfg(target_os = "linux")]
             InitSystem::Runit => write!(f, "runit"),
             #[cfg(target_os = "macos")]
@@ -407,6 +411,7 @@ async fn linux_detect_init_started(init: InitSystem) -> bool {
 
     match init {
         InitSystem::Systemd => is_started(Command::new("systemctl").arg("status")).await,
+        InitSystem::OpenRC => is_started(Command::new("rc-status").arg("-a")).await,
         InitSystem::Runit => {
             is_started(Command::new("sv").args(["status", "/var/service/sv"])).await
         },
@@ -418,6 +423,8 @@ async fn linux_detect_init_started(init: InitSystem) -> bool {
 async fn linux_detect_init_system() -> Result<InitSystem, InstallSettingsError> {
     if std::path::Path::new("/run/systemd/system").exists() {
         Ok(InitSystem::Systemd)
+    } else if std::path::Path::new("/run/openrc").exists() {
+        Ok(InitSystem::OpenRC)
     } else if std::path::Path::new("/run/runit").exists() {
         Ok(InitSystem::Runit)
     } else {
