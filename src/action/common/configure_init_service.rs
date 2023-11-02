@@ -42,7 +42,7 @@ const DARWIN_NIX_DAEMON_SOURCE: &str =
 
 /**
 Configure the init to run the Nix daemon
- */
+*/
 #[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
 pub struct ConfigureInitService {
     init: InitSystem,

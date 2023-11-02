@@ -1,5 +1,5 @@
 /*! Configurable knobs and their related errors
- */
+*/
 use std::{collections::HashMap, fmt::Display, path::PathBuf, str::FromStr};
 
 #[cfg(feature = "cli")]
@@ -63,7 +63,7 @@ impl std::fmt::Display for InitSystem {
 
 Settings which only apply to certain [`Planner`](crate::planner::Planner)s should be located in the planner.
 
- */
+*/
 #[serde_with::serde_as]
 #[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
 #[cfg_attr(feature = "cli", derive(clap::Parser))]
@@ -152,38 +152,38 @@ pub struct CommonSettings {
 
     /// The Nix package URL
     #[cfg_attr(
-    feature = "cli",
-    clap(long, env = "NIX_INSTALLER_NIX_PACKAGE_URL", global = true, value_parser = clap::value_parser!(UrlOrPath))
+        feature = "cli",
+        clap(long, env = "NIX_INSTALLER_NIX_PACKAGE_URL", global = true, value_parser = clap::value_parser!(UrlOrPath))
     )]
     #[cfg_attr(
-    all(target_os = "macos", target_arch = "x86_64", feature = "cli"),
-    clap(
-    default_value = NIX_X64_64_DARWIN_URL,
-    )
+        all(target_os = "macos", target_arch = "x86_64", feature = "cli"),
+        clap(
+            default_value = NIX_X64_64_DARWIN_URL,
+        )
     )]
     #[cfg_attr(
-    all(target_os = "macos", target_arch = "aarch64", feature = "cli"),
-    clap(
-    default_value = NIX_AARCH64_DARWIN_URL,
-    )
+        all(target_os = "macos", target_arch = "aarch64", feature = "cli"),
+        clap(
+            default_value = NIX_AARCH64_DARWIN_URL,
+        )
     )]
     #[cfg_attr(
-    all(target_os = "linux", target_arch = "x86_64", feature = "cli"),
-    clap(
-    default_value = NIX_X64_64_LINUX_URL,
-    )
+        all(target_os = "linux", target_arch = "x86_64", feature = "cli"),
+        clap(
+            default_value = NIX_X64_64_LINUX_URL,
+        )
     )]
     #[cfg_attr(
-    all(target_os = "linux", target_arch = "x86", feature = "cli"),
-    clap(
-    default_value = NIX_I686_LINUX_URL,
-    )
+        all(target_os = "linux", target_arch = "x86", feature = "cli"),
+        clap(
+            default_value = NIX_I686_LINUX_URL,
+        )
     )]
     #[cfg_attr(
-    all(target_os = "linux", target_arch = "aarch64", feature = "cli"),
-    clap(
-    default_value = NIX_AARCH64_LINUX_URL,
-    )
+        all(target_os = "linux", target_arch = "aarch64", feature = "cli"),
+        clap(
+            default_value = NIX_AARCH64_LINUX_URL,
+        )
     )]
     pub nix_package_url: UrlOrPath,
 
@@ -215,13 +215,13 @@ pub struct CommonSettings {
     #[cfg(feature = "diagnostics")]
     /// Relate the install diagnostic to a specific value
     #[cfg_attr(
-    feature = "cli",
-    clap(
-    long,
-    default_value = None,
-    env = "NIX_INSTALLER_DIAGNOSTIC_ATTRIBUTION",
-    global = true
-    )
+        feature = "cli",
+        clap(
+            long,
+            default_value = None,
+            env = "NIX_INSTALLER_DIAGNOSTIC_ATTRIBUTION",
+            global = true
+        )
     )]
     pub diagnostic_attribution: Option<String>,
 
@@ -245,12 +245,12 @@ pub struct CommonSettings {
     ///
     /// To disable diagnostic reporting, unset the default with `--diagnostic-endpoint ""`, or `NIX_INSTALLER_DIAGNOSTIC_ENDPOINT=""`
     #[clap(
-    long,
-    env = "NIX_INSTALLER_DIAGNOSTIC_ENDPOINT",
-    global = true,
-    value_parser = crate::diagnostics::diagnostic_endpoint_validator,
-    num_args = 0..=1, // Required to allow `--diagnostic-endpoint` or `NIX_INSTALLER_DIAGNOSTIC_ENDPOINT=""`
-    default_value = "https://install.determinate.systems/nix/diagnostic"
+        long,
+        env = "NIX_INSTALLER_DIAGNOSTIC_ENDPOINT",
+        global = true,
+        value_parser = crate::diagnostics::diagnostic_endpoint_validator,
+        num_args = 0..=1, // Required to allow `--diagnostic-endpoint` or `NIX_INSTALLER_DIAGNOSTIC_ENDPOINT=""`
+        default_value = "https://install.determinate.systems/nix/diagnostic"
     )]
     pub diagnostic_endpoint: Option<String>,
 }
@@ -439,12 +439,12 @@ pub struct InitSettings {
     /// Which init system to configure (if `--init none` Nix will be root-only)
     #[cfg_attr(feature = "cli", clap(value_parser, long, env = "NIX_INSTALLER_INIT",))]
     #[cfg_attr(
-    all(target_os = "macos", feature = "cli"),
-    clap(default_value_t = InitSystem::Launchd)
+        all(target_os = "macos", feature = "cli"),
+        clap(default_value_t = InitSystem::Launchd)
     )]
     #[cfg_attr(
-    all(target_os = "linux", feature = "cli"),
-    clap(default_value_t = InitSystem::Systemd)
+        all(target_os = "linux", feature = "cli"),
+        clap(default_value_t = InitSystem::Systemd)
     )]
     pub init: InitSystem,
 
